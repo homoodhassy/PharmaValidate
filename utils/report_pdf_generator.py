@@ -366,24 +366,34 @@ def generate_validation_report_pdf(output_path, data):
         
         story.append(Paragraph("<b>Repeatability (Analyst 1 / Day 1):</b>", h2_style))
         story.append(Paragraph(
-            f"Replicates: {precision[1]}, {precision[2]}, {precision[3]}, {precision[4]}, {precision[5]}, {precision[6]}  |  "
-            f"Mean: {precision[7]}  |  SD: {precision[8]}  |  % RSD: {precision[9]}  |  Status: {precision[10]}",
+            f"Replicates: {precision[2]}, {precision[3]}, {precision[4]}, {precision[5]}, {precision[6]}, {precision[7]}  |  "
+            f"Mean: {precision[8]}  |  SD: {precision[9]}  |  % RSD: {precision[10]}  |  Status: {precision[11]}",
             body_style
         ))
         
         story.append(Paragraph("<b>Intermediate Precision (Analyst 2 / Day 2):</b>", h2_style))
-        if precision[11]:
+        if precision[12]:
             story.append(Paragraph(
-                f"Replicates: {precision[11]}, {precision[12]}, {precision[13]}, {precision[14]}, {precision[15]}, {precision[16]}  |  "
-                f"Mean: {precision[17]}  |  SD: {precision[18]}  |  % RSD: {precision[19]}  |  Status: {precision[20]}",
+                f"Replicates: {precision[12]}, {precision[13]}, {precision[14]}, {precision[15]}, {precision[16]}, {precision[17]}  |  "
+                f"Mean: {precision[18]}  |  SD: {precision[19]}  |  % RSD: {precision[20]}  |  Status: {precision[21]}",
                 body_style
             ))
         else:
             story.append(Paragraph("No Intermediate Precision data available.", body_style))
+
+        if len(precision) > 27 and precision[27] is not None:
+            t_alpha = precision[28] if len(precision) > 28 and precision[28] is not None else 0.05
+            t_status = precision[29] if len(precision) > 29 else "PENDING"
+            story.append(Paragraph("<b>Two-Sample T-Test (Equal Variance):</b>", h2_style))
+            story.append(Paragraph(
+                f"t-Statistic: {precision[26]}  |  p-Value: {precision[27]}  |  "
+                f"Alpha: {t_alpha}  |  T-Test Status: {t_status}",
+                body_style
+            ))
         
         story.append(Paragraph("<b>Combined Precision:</b>", h2_style))
         story.append(Paragraph(
-            f"Combined Mean: {precision[21]}  |  Pooled SD: {precision[22]}  |  Combined % RSD: {precision[23]}  |  Overall Status: {precision[24]}",
+            f"Combined Mean: {precision[22]}  |  Pooled SD: {precision[23]}  |  Combined % RSD: {precision[24]}  |  Overall Status: {precision[25]}",
             body_style
         ))
         story.append(Spacer(1, 10))

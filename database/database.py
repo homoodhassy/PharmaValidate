@@ -45,6 +45,23 @@ def execute_with_retry(func, *args, max_retries=3, **kwargs):
     return None
 
 
+def _migrate_precision_ttest_columns(cursor):
+    """Adds t-test columns to existing precision_results tables."""
+    cursor.execute("PRAGMA table_info(precision_results)")
+    existing = {row[1] for row in cursor.fetchall()}
+    migrations = [
+        ("t_statistic", "REAL"),
+        ("t_p_value", "REAL"),
+        ("t_alpha", "REAL DEFAULT 0.05"),
+        ("t_test_status", "TEXT"),
+    ]
+    for column_name, column_type in migrations:
+        if column_name not in existing:
+            cursor.execute(
+                f"ALTER TABLE precision_results ADD COLUMN {column_name} {column_type}"
+            )
+
+
 def initialize_database():
     """Creates all tables for PharmaValidate."""
     print("🔵 Initializing database...")
@@ -220,10 +237,16 @@ def initialize_database():
                 combined_sd REAL,
                 combined_rsd REAL,
                 overall_status TEXT,
+                t_statistic REAL,
+                t_p_value REAL,
+                t_alpha REAL DEFAULT 0.05,
+                t_test_status TEXT,
                 saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
             )
         """)
+
+        _migrate_precision_ttest_columns(cursor)
 
         # Robustness OFAT results
         cursor.execute("""
@@ -716,8 +739,9 @@ def save_precision(project_id, data):
                 rep_mean, rep_sd, rep_rsd, rep_status,
                 ip_1, ip_2, ip_3, ip_4, ip_5, ip_6,
                 ip_mean, ip_sd, ip_rsd, ip_status,
-                combined_mean, combined_sd, combined_rsd, overall_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                combined_mean, combined_sd, combined_rsd, overall_status,
+                t_statistic, t_p_value, t_alpha, t_test_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             project_id,
             data.get("rep_1", 0.0), data.get("rep_2", 0.0), data.get("rep_3", 0.0),
@@ -729,7 +753,9 @@ def save_precision(project_id, data):
             data.get("ip_mean", 0.0), data.get("ip_sd", 0.0), data.get("ip_rsd", 0.0),
             data.get("ip_status", "PENDING"),
             data.get("combined_mean", 0.0), data.get("combined_sd", 0.0),
-            data.get("combined_rsd", 0.0), data.get("overall_status", "PENDING")
+            data.get("combined_rsd", 0.0), data.get("overall_status", "PENDING"),
+            data.get("t_statistic"), data.get("t_p_value"),
+            data.get("t_alpha", 0.05), data.get("t_test_status", "PENDING")
         ))
         
         conn.commit()

@@ -825,6 +825,11 @@ class ReportsPage(QWidget):
         combined_sd = data[23] if len(data) > 23 else 0.0
         combined_rsd = data[24] if len(data) > 24 else 0.0
         overall_status = data[25] if len(data) > 25 else "PENDING"
+
+        t_statistic = data[26] if len(data) > 26 and data[26] is not None else None
+        t_p_value = data[27] if len(data) > 27 and data[27] is not None else None
+        t_alpha = data[28] if len(data) > 28 and data[28] is not None else 0.05
+        t_test_status = data[29] if len(data) > 29 else "PENDING"
         
         print(f"📋 Extracted precision data - rep_mean: {rep_mean}, ip_mean: {ip_mean}, combined_mean: {combined_mean}")  # Debug
         
@@ -843,6 +848,11 @@ class ReportsPage(QWidget):
         ip_mean_str = f"{ip_mean:.2f}" if ip_mean > 0 else "N/A"
         ip_sd_str = f"{ip_sd:.4f}" if ip_sd > 0 else "N/A"
         ip_rsd_str = f"{ip_rsd:.2f}" if ip_rsd > 0 else "N/A"
+
+        has_ttest = t_statistic is not None and t_p_value is not None
+        t_stat_str = f"{t_statistic:.4f}" if has_ttest else "N/A"
+        t_pvalue_str = f"{t_p_value:.4f}" if has_ttest else "N/A"
+        t_test_status_color = '#10B981' if t_test_status == 'PASS' else '#EF4444' if t_test_status == 'FAIL' else '#94A3B8'
         
         html = f"""
         <div style="font-family: Arial, sans-serif; padding: 20px;">
@@ -918,6 +928,22 @@ class ReportsPage(QWidget):
                     <td style="padding: 6px; color: {ip_status_color}; font-weight: bold;">{ip_status}</td>
                 </tr>
             </table>
+
+            <h3 style="margin-top: 20px;">Two-Sample T-Test (Equal Variance)</h3>
+            <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; background-color: #F8FAFC; border: 1px solid #CBD5E1;">
+                <tr>
+                    <td style="padding: 8px; font-weight: bold;">Alpha (α):</td>
+                    <td style="padding: 8px;">{t_alpha:.2f}</td>
+                    <td style="padding: 8px; font-weight: bold;">t-Statistic:</td>
+                    <td style="padding: 8px;">{t_stat_str}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px; font-weight: bold;">p-Value (Probability Factor):</td>
+                    <td style="padding: 8px;">{t_pvalue_str}</td>
+                    <td style="padding: 8px; font-weight: bold;">T-Test Status (p ≤ α):</td>
+                    <td style="padding: 8px; color: {t_test_status_color}; font-weight: bold;">{t_test_status}</td>
+                </tr>
+            </table>
             
             <h3 style="margin-top: 20px;">Combined Precision Summary (N=12 or N=6)</h3>
             <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; background-color: #F0F4F8; border: 1px solid #CBD5E1; border-radius: 6px; padding: 15px;">
@@ -940,7 +966,7 @@ class ReportsPage(QWidget):
             </table>
             
             <div style="margin-top: 20px; padding: 10px; background-color: #E8F5E9; border-left: 4px solid #10B981; border-radius: 4px;">
-                <p style="color: #2E7D32; font-size: 11px; margin: 0;"><b>✓ Acceptance Criteria:</b> % RSD ≤ 2.0% for each test (Repeatability, Intermediate Precision, Combined)</p>
+                <p style="color: #2E7D32; font-size: 11px; margin: 0;"><b>✓ Acceptance Criteria:</b> % RSD ≤ 2.0% for each test (Repeatability, Intermediate Precision, Combined); Two-sample t-test p-value ≤ α ({t_alpha:.2f}) when both sample sets are provided.</p>
             </div>
         </div>
         """
