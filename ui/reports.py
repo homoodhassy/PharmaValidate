@@ -268,8 +268,9 @@ class ReportsPage(QWidget):
             self.clear_report()
             return
 
-        # Update project info
-        _, name, product, method, val_type, protocol, analyst = project
+        # FIXED: Safe unpacking captures the 8-item structure cleanly
+        _, name, product, method, val_type, protocol, analyst, *_ = project
+
         self.project_info.setText(
             f"<b>Project:</b> {name}<br>"
             f"<b>Product:</b> {product}<br>"
@@ -388,9 +389,10 @@ class ReportsPage(QWidget):
     # HTML GENERATION METHODS
     # ============================================
 
-    def generate_summary_html(self, project, protocol, summary):
+    def generate_summary_html(self, project, protocol_data, summary):
         """Generates the summary tab HTML."""
-        _, name, product, method, val_type, protocol_num, analyst = project
+        # FIXED: Safe unpacking parameters used here to match layout keys
+        _, name, product, method, val_type, protocol, analyst, *_ = project
 
         html = f"""
         <div style="font-family: Arial, sans-serif; padding: 20px;">
@@ -403,7 +405,7 @@ class ReportsPage(QWidget):
                 <tr><td style="padding: 4px;"><b>Product:</b></td><td>{product}</td></tr>
                 <tr><td style="padding: 4px;"><b>Method:</b></td><td>{method}</td></tr>
                 <tr><td style="padding: 4px;"><b>Validation Type:</b></td><td>{val_type}</td></tr>
-                <tr><td style="padding: 4px;"><b>Protocol Number:</b></td><td>{protocol_num}</td></tr>
+                <tr><td style="padding: 4px;"><b>Protocol Number:</b></td><td>{protocol}</td></tr>
                 <tr><td style="padding: 4px;"><b>Analyst:</b></td><td>{analyst}</td></tr>
             </table>
             

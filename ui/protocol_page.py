@@ -50,6 +50,7 @@ class ProtocolPage(QWidget):
 
         h_layout.addStretch()
 
+        # FIXED: Ensured reference name consistency across methods
         self.project_dropdown = QComboBox()
         self.project_dropdown.setFixedWidth(280)
         self.project_dropdown.setStyleSheet("""
@@ -138,7 +139,6 @@ class ProtocolPage(QWidget):
         scroll_layout = QVBoxLayout(scroll_widget)
         scroll_layout.setSpacing(6)
 
-        # Re-introducing LOD and LOQ to the list of selectable parameter targets
         all_params = [
             "System Suitability", "Specificity", "LOD", "LOQ", 
             "Linearity & Range", "Accuracy (Recovery)", 
@@ -162,7 +162,6 @@ class ProtocolPage(QWidget):
         tab2_layout = QVBoxLayout(tab2_widget)
         tab2_layout.setSpacing(10)
 
-        # Reference Standard Preparation Input
         std_label = QLabel("Reference Standard Prep:")
         std_label.setStyleSheet("font-weight: bold; color: #475569; font-size: 11px;")
         self.txt_std_prep = QPlainTextEdit()
@@ -172,7 +171,6 @@ class ProtocolPage(QWidget):
         tab2_layout.addWidget(std_label)
         tab2_layout.addWidget(self.txt_std_prep, 1)
 
-        # Sample Preparation Input
         sample_label = QLabel("Sample Preparation Strategy:")
         sample_label.setStyleSheet("font-weight: bold; color: #475569; font-size: 11px;")
         self.txt_sample_prep = QPlainTextEdit()
@@ -182,7 +180,6 @@ class ProtocolPage(QWidget):
         tab2_layout.addWidget(sample_label)
         tab2_layout.addWidget(self.txt_sample_prep, 1)
 
-        # HPLC conditions toggle & setup
         self.chk_is_hplc = QCheckBox("Apply Chromatographic Conditions (HPLC)")
         self.chk_is_hplc.setStyleSheet("font-weight: bold; font-size: 11px; color: #1E3A8A;")
         self.chk_is_hplc.stateChanged.connect(self.toggle_hplc_layout)
@@ -224,7 +221,6 @@ class ProtocolPage(QWidget):
         tab2_layout.addWidget(self.hplc_group)
         self.hplc_group.setVisible(False)
 
-        # --- Dynamic Robustness Experimental Design Settings ---
         self.robustness_group = QGroupBox("Robustness Evaluation Strategy")
         self.robustness_group.setStyleSheet("QGroupBox { font-size: 10px; font-weight: bold; color: #475569; }")
         robustness_layout = QVBoxLayout(self.robustness_group)
@@ -244,7 +240,6 @@ class ProtocolPage(QWidget):
         robustness_layout.addWidget(robustness_lbl)
         robustness_layout.addWidget(self.cmb_robustness_type)
         
-        # Additional robustness parameters
         self.chk_robustness_variables = QCheckBox("Include detailed robustness parameters table")
         self.chk_robustness_variables.setChecked(True)
         self.chk_robustness_variables.setStyleSheet("font-size: 10px; color: #475569;")
@@ -252,12 +247,12 @@ class ProtocolPage(QWidget):
         robustness_layout.addWidget(self.chk_robustness_variables)
         
         tab2_layout.addWidget(self.robustness_group)
-        self.robustness_group.setVisible(False)  # Hidden by default, toggled via parameters
+        self.robustness_group.setVisible(False)
 
         self.survey_tabs.addTab(tab2_widget, "Methodology")
 
         # -------------------------------------------------------------
-        # TAB 3: CALCULATION FORMULA & MATH (NEW!)
+        # TAB 3: CALCULATION FORMULA & MATH
         # -------------------------------------------------------------
         tab3_widget = QWidget()
         tab3_layout = QVBoxLayout(tab3_widget)
@@ -315,7 +310,7 @@ class ProtocolPage(QWidget):
         tab4_layout.addStretch()
         self.survey_tabs.addTab(tab4_widget, "Limits")
 
-        # Pack nested tab system to survey column
+        # Pack layouts
         survey_layout.addWidget(self.survey_tabs)
         body_layout.addWidget(self.survey_panel)
 
@@ -366,27 +361,33 @@ class ProtocolPage(QWidget):
         main_layout.addLayout(footer_layout)
         
         self.survey_panel.setEnabled(False)
+        
+        # Safe Setup Initialization call
         self.load_active_projects()
 
-    # -----------------------------------------------------------------
-    # Interaction & Regulatory Guidance Logic
-    # -----------------------------------------------------------------
     def load_active_projects(self):
-        self.project_dropdown.blockSignals(True)
+        """Load all available projects into the project selector dropdown."""
+        # FIXED: Consolidated attribute reference name to self.project_dropdown
         self.project_dropdown.clear()
-        self.project_dropdown.addItem("--- Select an Active Project ---", None)
-        
-        for proj in get_projects():
-            p_id, p_name, _, _, _, p_protocol, _ = proj
-            self.project_dropdown.addItem(f"[{p_protocol}] {p_name}", p_id)
-            
-        self.project_dropdown.blockSignals(False)
-        self.preview_browser.setHtml(
-            "<h3 style='color:#64748B; text-align:center; margin-top:100px;'>"
-            "Select an active validation project from the dropdown to initialize workspace...</h3>"
-        )
-        self.survey_panel.setEnabled(False)
-        self.btn_generate.setEnabled(False)
+
+        projects = get_projects()
+
+        if not projects:
+            self.project_dropdown.addItem("No Projects Available", None)
+            return
+
+        for proj in projects:
+            p_id = proj[0]
+            p_name = proj[1]
+            p_protocol = proj[5] if len(proj) > 5 else ""
+
+            display = (
+                f"{p_name} ({p_protocol})"
+                if p_protocol
+                else p_name
+            )
+
+            self.project_dropdown.addItem(display, p_id)
 
     def on_project_selected(self):
         project_id = self.project_dropdown.currentData()
@@ -398,7 +399,7 @@ class ProtocolPage(QWidget):
 
         self.active_project_data = get_project(project_id)
         if self.active_project_data:
-            _, name, product, method, val_type, protocol, analyst = self.active_project_data
+            _, name, product, method, val_type, protocol, analyst, *_ = self.active_project_data
             self.survey_panel.setEnabled(True)
             self.btn_generate.setEnabled(True)
             
@@ -425,14 +426,12 @@ class ProtocolPage(QWidget):
         test_type = self.cmb_test_type.currentText()
         is_validation = self.rad_validation.isChecked()
 
-        # 1. Parameter checklist dynamic toggling
         for chk in self.checkbox_map.values():
             chk.blockSignals(True)
             chk.setChecked(False)
 
         if test_type == "Assay":
             defaults = ["System Suitability", "Specificity", "Linearity & Range", "Accuracy (Recovery)", "Precision (Repeatability)", "Robustness"]
-            # Auto-populate mathematical assay equations and definitions
             self.txt_formula.setPlainText("Assay (%) = [ (At * WStd * P * Avg.wt * 100) / (As * Wt * LC * 100) ]")
             self.txt_formula_defs.setPlainText(
                 "Where:\n"
@@ -444,13 +443,11 @@ class ProtocolPage(QWidget):
                 "P = Certified purity/potency of standard (%)\n"
                 "LC = Label claim of active ingredient (mg)"
             )
-            # Standard Assay Limits
             self.txt_limit_rsd.setText("2.0%")
             self.txt_limit_recovery.setText("98.0% - 102.0%")
 
         elif test_type == "Dissolution":
             defaults = ["System Suitability", "Specificity", "Linearity & Range", "Accuracy (Recovery)", "Precision (Repeatability)", "Robustness"]
-            # Auto-populate Dissolution Volume and dilution math models
             self.txt_formula.setPlainText("Dissolution (%) = [ (At * WStd * P * 900 * C_dil * 100) / (As * LC * 100) ]")
             self.txt_formula_defs.setPlainText(
                 "Where:\n"
@@ -462,14 +459,11 @@ class ProtocolPage(QWidget):
                 "P = Certified standard potency (%)\n"
                 "LC = Label claim of tablet active dosage (mg)"
             )
-            # Dissolution Limits
             self.txt_limit_rsd.setText("2.0%")
             self.txt_limit_recovery.setText("Q - 20% to Q + 20%")
 
         elif test_type == "Related Substances (RS)":
-            # LOD/LOQ restored as default parameters for impurity methods
             defaults = ["System Suitability", "Specificity", "LOD", "LOQ", "Linearity & Range", "Accuracy (Recovery)", "Precision (Repeatability)", "Intermediate Precision", "Robustness"]
-            # Auto-populate Relative Response Factor (RRF) impurity math
             self.txt_formula.setPlainText("Individual Impurity (%) = [ (Ai * WStd * P * D_sample * 100) / (As_diluted * Wt * RRF * 100) ]")
             self.txt_formula_defs.setPlainText(
                 "Where:\n"
@@ -480,11 +474,9 @@ class ProtocolPage(QWidget):
                 "RRF = Relative Response Factor of specific target impurity\n"
                 "D_sample = Relative dilution ratio matrix multiplier"
             )
-            # RS Limits
             self.txt_limit_rsd.setText("10.0%")
             self.txt_limit_recovery.setText("80.0% - 120.0%")
 
-        # Verification overrides (Simplified checklist protocol targets)
         if not is_validation:
             defaults = ["System Suitability", "Specificity", "Precision (Repeatability)"]
 
@@ -509,18 +501,16 @@ class ProtocolPage(QWidget):
         if not self.active_project_data:
             return
 
-        _, name, product, method, val_type, protocol, analyst = self.active_project_data
+        _, name, product, method, val_type, protocol, analyst, *_ = self.active_project_data
         company = self.txt_company.text() if self.txt_company.text() else "Analytical Laboratory"
         study_type = "Validation" if self.rad_validation.isChecked() else "Verification"
         test_type = self.cmb_test_type.currentText()
         selected_params = self.get_selected_parameters()
 
-        # Handle visibility logic for the new Robustness configuration group in Tab 2
         is_robustness_active = "Robustness" in selected_params
         if hasattr(self, 'robustness_group'):
             self.robustness_group.setVisible(is_robustness_active)
 
-        # Dynamic parameter row builder with specific, high-fidelity GMP explanations
         rows_html = ""
         for param in selected_params:
             strategy = "Experimental parameters execution based on standard protocol rules."
@@ -552,7 +542,6 @@ class ProtocolPage(QWidget):
                 limits = "Quantifiable with RSD ≤ 10.0%."
             elif param == "Robustness":
                 robust_strategy = self.cmb_robustness_type.currentText()
-                # Enhanced strategy based on selection type
                 if "OFAT" in robust_strategy and "Both" not in robust_strategy:
                     strategy = f"Slight variation of critical parameters using <b>{robust_strategy}</b> model design. Each parameter varied individually (n=3 replicates per condition) while maintaining all other parameters at nominal values."
                     limits = "System suitability parameters remain compliant at both low and high levels of each tested parameter."
@@ -571,7 +560,6 @@ class ProtocolPage(QWidget):
             </tr>
             """
 
-        # Dynamic HPLC parameter block representation
         hplc_block_html = ""
         if self.chk_is_hplc.isChecked():
             hplc_block_html = f"""
@@ -604,18 +592,15 @@ class ProtocolPage(QWidget):
             </table>
             """
 
-        # Dynamic Robustness Section Narrative - VERSATILE EXPLANATORY CONTENT
         robustness_block_html = ""
         if is_robustness_active:
             robust_type = self.cmb_robustness_type.currentText()
             include_table = self.chk_robustness_variables.isChecked()
             
-            # Determine method type
             is_ofat = "OFAT" in robust_type and "Both" not in robust_type
             is_doe = "Full Factorial" in robust_type
             is_both = "Both" in robust_type
             
-            # Build EXPLANATORY description based on method - NO HARDCODED VALUES
             if is_ofat:
                 desc = (
                     "The OFAT (One Factor at a Time) approach evaluates robustness by varying one chromatographic parameter "
@@ -660,18 +645,14 @@ class ProtocolPage(QWidget):
             </p>
             """
             
-            # Add EXPLANATORY parameters table if checked - NO HARDCODED VALUES
             if include_table:
-                # Get current parameter values from UI for context
                 current_flow = self.txt_flow.text()
                 current_temp = self.txt_temp.text()
-                current_column = self.txt_column.text()
                 current_mobile = self.txt_mobile.text()
                 current_wavelength = self.txt_wavelength.text()
                 
-                # OFAT EXPLANATORY TABLE
                 if is_ofat or is_both:
-                    robustness_block_html += """
+                    robustness_block_html += f"""
                     <p style="color: #475569; font-size: 9px; margin-top: 8px;"><b>OFAT Experimental Design Guide:</b></p>
                     <p style="color: #64748B; font-size: 8.5px; margin-top: 2px; font-style: italic;">
                         For each parameter below, perform independent experiments at the defined levels while keeping all other parameters at nominal values.
@@ -715,7 +696,6 @@ class ProtocolPage(QWidget):
                     </p>
                     """
                 
-                # DOE EXPLANATORY TABLE
                 if is_doe or is_both:
                     if is_both:
                         robustness_block_html += """
@@ -726,7 +706,7 @@ class ProtocolPage(QWidget):
                         <p style="color: #475569; font-size: 9px; margin-top: 8px;"><b>DOE Partial Factorial Design Guide:</b></p>
                         """
                     
-                    robustness_block_html += """
+                    robustness_block_html += f"""
                     <p style="color: #64748B; font-size: 8.5px; margin-top: 2px; font-style: italic;">
                         Execute a 2^(k-1) fractional factorial design where k = number of factors. Each run is performed in duplicate.
                         Analyze results using ANOVA to identify significant factors and interactions (p < 0.05).
@@ -773,9 +753,9 @@ class ProtocolPage(QWidget):
                         </tr>
                     </table>
                     <p style="color: #64748B; font-size: 8px; margin-top: 3px; font-style: italic;">
-                        <b>Statistical Analysis:</b> Perform ANOVA to identify significant factors (p < 0.05). 
-                        Factors with p < 0.05 are considered statistically significant. Effect estimates indicate the magnitude of impact 
-                        on method performance (e.g., recovery %, retention time, peak area).
+                        <b>Statistical Analysis:</b> Perform ANOVA to identify significant factors (p &lt; 0.05). 
+                        Factors with p &lt; 0.05 are considered statistically significant. Effect estimates indicate the magnitude of impact 
+                        on method performance.
                     </p>
                     """
                 
@@ -842,7 +822,6 @@ class ProtocolPage(QWidget):
 
         if file_path:
             try:
-                # Build survey data with robustness information
                 survey_data = {
                     "company_name": self.txt_company.text(),
                     "study_type": study_type,
@@ -862,7 +841,6 @@ class ProtocolPage(QWidget):
                     "limit_rsd": self.txt_limit_rsd.text(),
                     "limit_tailing": self.txt_limit_tailing.text(),
                     "limit_recovery": self.txt_limit_recovery.text(),
-                    # Export robustness selection and optional table toggle
                     "robustness_type": self.cmb_robustness_type.currentText() if "Robustness" in self.get_selected_parameters() else None,
                     "robustness_include_table": self.chk_robustness_variables.isChecked() if "Robustness" in self.get_selected_parameters() else False
                 }

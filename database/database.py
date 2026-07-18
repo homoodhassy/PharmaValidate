@@ -6,7 +6,12 @@ import sqlite3
 import time
 from pathlib import Path
 
-DB_FILE = Path("data/pharmavalidate.db")
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = BASE_DIR / "data"
+
+DATA_DIR.mkdir(exist_ok=True)
+
+DB_FILE = DATA_DIR / "pharmavalidate.db"
 
 
 def get_connection(max_retries=5, delay=0.5):
