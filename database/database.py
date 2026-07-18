@@ -527,14 +527,21 @@ def get_specificity_results(project_id):
 # LINEARITY FUNCTIONS
 # ============================================
 
-def save_linearity(project_id, data):
-    """Saves linearity validation results."""
+def save_linearity(project_id, data, delete_first=False):
+    """Saves linearity validation results for a single level.
+    
+    Args:
+        project_id: Project ID
+        data: Dictionary with level data
+        delete_first: If True, delete all old linearity data for this project first
+    """
     conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("DELETE FROM linearity_results WHERE project_id = ?", (project_id,))
+        if delete_first:
+            cursor.execute("DELETE FROM linearity_results WHERE project_id = ?", (project_id,))
         
         cursor.execute("""
             INSERT INTO linearity_results (
@@ -710,7 +717,7 @@ def save_precision(project_id, data):
                 ip_1, ip_2, ip_3, ip_4, ip_5, ip_6,
                 ip_mean, ip_sd, ip_rsd, ip_status,
                 combined_mean, combined_sd, combined_rsd, overall_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             project_id,
             data.get("rep_1", 0.0), data.get("rep_2", 0.0), data.get("rep_3", 0.0),
@@ -1084,14 +1091,14 @@ def get_validation_summary(project_id):
         
         if row:
             return {
-                "specificity_status": row[1],
-                "linearity_status": row[2],
-                "accuracy_status": row[3],
-                "precision_status": row[4],
-                "robustness_status": row[5],
-                "rel_sub_status": row[6],
-                "overall_status": row[7],
-                "report_generated_date": row[8]
+                "specificity_status": row[2],
+                "linearity_status": row[3],
+                "accuracy_status": row[4],
+                "precision_status": row[5],
+                "robustness_status": row[6],
+                "rel_sub_status": row[7],
+                "overall_status": row[8],
+                "report_generated_date": row[9]
             }
         return None
     finally:

@@ -10,6 +10,12 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for image generation
+from matplotlib.figure import Figure
+import base64
+from io import BytesIO
+
 from database.database import (
     get_projects, get_project, get_protocol_by_project,
     get_specificity_results, get_linearity_results,
@@ -290,6 +296,7 @@ class ReportsPage(QWidget):
 
         print(f"🟢 Specificity data: {len(specificity_data)} rows")  # Debug
         print(f"🟢 Linearity data: {len(linearity_data)} rows")  # Debug
+        print(f"🟢 Precision data: {'Present' if precision_data else 'None'}")  # Debug
 
         # Get protocol
         protocol_data = get_protocol_by_project(project_id)
@@ -500,7 +507,7 @@ class ReportsPage(QWidget):
         self.module_tabs["Specificity"].setHtml(html)
 
     def generate_linearity_html(self, data):
-        """Generates the Linearity tab HTML."""
+        """Generates the Linearity tab HTML with comprehensive summary table and regression plot."""
         if not data:
             html = """
             <div style="padding: 20px; color: #64748B; text-align: center;">
@@ -512,70 +519,171 @@ class ReportsPage(QWidget):
             return
 
         first_row = data[0]
+        
+        # Extract key regression parameters (same for all rows)
+        slope = first_row[12] if len(first_row) > 12 else 0
+        intercept = first_row[13] if len(first_row) > 13 else 0
+        r_squared = first_row[14] if len(first_row) > 14 else 0
+        multiple_r = first_row[15] if len(first_row) > 15 else 0
+        rss = first_row[16] if len(first_row) > 16 else 0
+        y_intercept_pct = first_row[17] if len(first_row) > 17 else 0
+        pooled_rsd = first_row[18] if len(first_row) > 18 else 0
+        r_sq_status = first_row[19] if len(first_row) > 19 else "PENDING"
+        y_int_status = first_row[20] if len(first_row) > 20 else "PENDING"
+        overall_status = first_row[21] if len(first_row) > 21 else "PENDING"
+        
         html = f"""
         <div style="font-family: Arial, sans-serif; padding: 20px;">
-            <h2 style="color: #1E3A8A;">Linearity Results</h2>
+            <h2 style="color: #1E3A8A;">Linearity & Range Results</h2>
             <hr style="border: 1px solid #E2E8F0;">
             
-            <h3>Summary Statistics</h3>
+            <h3>Regression Summary</h3>
             <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px;">
+                <tr>
+                    <td style="padding: 6px; font-weight: bold;">Slope:</td>
+                    <td style="padding: 6px;">{slope:.5f}</td>
+                    <td style="padding: 6px; font-weight: bold;">Intercept:</td>
+                    <td style="padding: 6px;">{intercept:.4f}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 6px; font-weight: bold;">R²:</td>
+                    <td style="padding: 6px; color: {'#10B981' if r_sq_status == 'PASS' else '#EF4444'};">{r_squared:.5f} ({r_sq_status})</td>
+                    <td style="padding: 6px; font-weight: bold;">Multiple R:</td>
+                    <td style="padding: 6px;">{multiple_r:.5f}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 6px; font-weight: bold;">% Y-Intercept:</td>
+                    <td style="padding: 6px; color: {'#10B981' if y_int_status == 'PASS' else '#EF4444'};">{y_intercept_pct:.2f}% ({y_int_status})</td>
+                    <td style="padding: 6px; font-weight: bold;">Pooled % RSD:</td>
+                    <td style="padding: 6px;">{pooled_rsd:.2f}%</td>
+                </tr>
+                <tr style="background-color: #F0F4F8;">
+                    <td style="padding: 6px; font-weight: bold;">Overall Status:</td>
+                    <td colspan="3" style="padding: 6px; color: {'#10B981' if overall_status == 'PASS' else '#EF4444'}; font-weight: bold; font-size: 14px;">{overall_status}</td>
+                </tr>
+            </table>
+            
+            <h3>Level-by-Level Analysis</h3>
+            <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px;">
+                <tr style="background-color: #1E3A8A; color: white;">
+                    <th style="padding: 6px; text-align: center;">Level</th>
+                    <th style="padding: 6px; text-align: center;">Nom (%)</th>
+                    <th style="padding: 6px; text-align: center;">Weight 1</th>
+                    <th style="padding: 6px; text-align: center;">Weight 2</th>
+                    <th style="padding: 6px; text-align: center;">Weight 3</th>
+                    <th style="padding: 6px; text-align: center;">Response 1</th>
+                    <th style="padding: 6px; text-align: center;">Response 2</th>
+                    <th style="padding: 6px; text-align: center;">Response 3</th>
+                    <th style="padding: 6px; text-align: center;">Mean Response</th>
+                    <th style="padding: 6px; text-align: center;">% RSD</th>
+                </tr>
         """
 
-        summary_fields = [
-            ("Slope", first_row[10]),
-            ("Intercept", first_row[11]),
-            ("R²", first_row[12]),
-            ("% Y-Intercept", first_row[13]),
-            ("Pooled % RSD", first_row[17] if len(first_row) > 17 else "N/A"),
-            ("Overall Status", first_row[20] if len(first_row) > 20 else "PENDING")
-        ]
-
-        for label, value in summary_fields:
-            color = "#10B981" if value == "PASS" else "#EF4444" if value == "FAIL" else "#1E3A8A"
+        for idx, row in enumerate(data):
+            level_num = row[2] if len(row) > 2 else idx + 1
+            nom_pct = row[3] if len(row) > 3 else 0
+            w1 = f"{row[4]:.2f}" if len(row) > 4 and row[4] else "—"
+            w2 = f"{row[5]:.2f}" if len(row) > 5 and row[5] else "—"
+            w3 = f"{row[6]:.2f}" if len(row) > 6 and row[6] else "—"
+            r1 = f"{row[7]:.1f}" if len(row) > 7 and row[7] else "—"
+            r2 = f"{row[8]:.1f}" if len(row) > 8 and row[8] else "—"
+            r3 = f"{row[9]:.1f}" if len(row) > 9 and row[9] else "—"
+            mean_resp = row[10] if len(row) > 10 else 0
+            rsd_pct = row[11] if len(row) > 11 else 0
+            
             html += f"""
                 <tr>
-                    <td style="padding: 4px; font-weight: bold;">{label}:</td>
-                    <td style="padding: 4px; color: {color};">{value}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{level_num}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{nom_pct}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{w1}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{w2}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{w3}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{r1}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{r2}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{r3}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center; font-weight: bold;">{mean_resp:.2f}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{rsd_pct:.2f}%</td>
                 </tr>
             """
 
         html += """
             </table>
             
-            <h3>Level Data</h3>
-            <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px;">
-                <tr style="background-color: #1E3A8A; color: white;">
-                    <th style="padding: 6px; text-align: center;">Level</th>
-                    <th style="padding: 6px; text-align: center;">Nom (%)</th>
-                    <th style="padding: 6px; text-align: center;">W1</th>
-                    <th style="padding: 6px; text-align: center;">W2</th>
-                    <th style="padding: 6px; text-align: center;">W3</th>
-                    <th style="padding: 6px; text-align: center;">A1</th>
-                    <th style="padding: 6px; text-align: center;">A2</th>
-                    <th style="padding: 6px; text-align: center;">A3</th>
-                    <th style="padding: 6px; text-align: center;">Mean</th>
-                    <th style="padding: 6px; text-align: center;">% RSD</th>
-                </tr>
+            <h3 style="margin-top: 20px;">Regression Plot</h3>
+            <div style="text-align: center; margin-top: 15px; padding: 15px; background-color: #F8FAFC; border-radius: 8px;">
+                <img src="data:image/png;base64,{plot_image}" style="max-width: 100%; height: auto; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);" />
+            </div>
+        </div>
         """
-
-        for row in data:
-            html += f"""
-                <tr>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{row[1]}</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{row[2]}</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{row[3]}</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{row[4]}</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{row[5]}</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{row[6]}</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{row[7]}</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{row[8]}</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{row[9]}</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{row[10]}</td>
-                </tr>
-            """
-
-        html += "</table></div>"
+        
+        # Generate matplotlib plot and embed as base64
+        plot_base64 = self.generate_linearity_plot(data, slope, intercept)
+        html = html.format(plot_image=plot_base64)
+        
         self.module_tabs["Linearity"].setHtml(html)
+
+    def generate_linearity_plot(self, data, slope, intercept):
+        """Generates a matplotlib plot showing linearity regression and returns as base64 image."""
+        try:
+            # Extract all weight and response values for plotting
+            all_weights = []
+            all_responses = []
+            
+            for row in data:
+                for i in range(4, 7):  # columns 4, 5, 6 are weight_1, 2, 3
+                    if len(row) > i and row[i]:
+                        all_weights.append(float(row[i]))
+                
+                for i in range(7, 10):  # columns 7, 8, 9 are response_1, 2, 3
+                    if len(row) > i and row[i]:
+                        all_responses.append(float(row[i]))
+            
+            # Create figure
+            fig = Figure(figsize=(8, 5), dpi=100)
+            ax = fig.add_subplot(111)
+            
+            # Plot raw data points
+            if all_weights and all_responses:
+                ax.scatter(all_weights, all_responses, color='#1E3A8A', s=80, alpha=0.7, label='Data Points', zorder=5)
+                
+                # Plot regression line
+                min_x = min(all_weights) if all_weights else 0
+                max_x = max(all_weights) if all_weights else 1
+                margin = (max_x - min_x) * 0.1 if max_x != min_x else 1.0
+                fit_x = [min_x - margin, max_x + margin]
+                fit_y = [slope * x + intercept for x in fit_x]
+                
+                ax.plot(fit_x, fit_y, color='#EF4444', linestyle='--', linewidth=2.5, label='Regression Line', zorder=4)
+            
+            # Styling
+            ax.set_xlabel('Measured Weight (Concentration)', fontsize=11, fontweight='bold')
+            ax.set_ylabel('Analytical Response (Area)', fontsize=11, fontweight='bold')
+            ax.set_title('Linearity Plot: Response vs. Concentration', fontsize=12, fontweight='bold', color='#1E3A8A')
+            ax.grid(True, linestyle='--', alpha=0.5, zorder=0)
+            ax.legend(loc='upper left', fontsize=10)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            
+            # Add equation and R² to plot
+            r_squared = data[0][14] if len(data[0]) > 14 else 0
+            eq_text = f'y = {slope:.4f}x + {intercept:.2f}\nR² = {r_squared:.5f}'
+            ax.text(0.95, 0.05, eq_text, transform=ax.transAxes, 
+                   fontsize=10, verticalalignment='bottom', horizontalalignment='right',
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.85, edgecolor='#CBD5E1'))
+            
+            fig.tight_layout()
+            
+            # Convert to base64
+            buffer = BytesIO()
+            fig.savefig(buffer, format='png', dpi=100, bbox_inches='tight')
+            buffer.seek(0)
+            image_base64 = base64.b64encode(buffer.read()).decode()
+            buffer.close()
+            
+            return image_base64
+        except Exception as e:
+            print(f"❌ Error generating linearity plot: {e}")
+            return ""
 
     def generate_accuracy_html(self, data):
         """Generates the Accuracy tab HTML."""
@@ -634,26 +742,26 @@ class ReportsPage(QWidget):
             """
 
         # Level 100
-        if len(data) > 39:
+        if len(data) > 37:
             html += f"""
                 <tr>
                     <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">100%</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{data[34] if len(data) > 34 else "N/A"}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{data[35] if len(data) > 35 else "N/A"}</td>
                     <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{data[36] if len(data) > 36 else "N/A"}</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{data[37] if len(data) > 37 else "N/A"}</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{data[38] if len(data) > 38 else "N/A"}</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center; color: { '#10B981' if data[39] == 'PASS' else '#EF4444' };">{data[39] if len(data) > 39 else "N/A"}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center; color: { '#10B981' if data[37] == 'PASS' else '#EF4444' };">{data[37] if len(data) > 37 else "N/A"}</td>
                 </tr>
             """
 
         # Level 120
-        if len(data) > 54:
+        if len(data) > 50:
             html += f"""
                 <tr>
                     <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">120%</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{data[51] if len(data) > 51 else "N/A"}</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{data[52] if len(data) > 52 else "N/A"}</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{data[53] if len(data) > 53 else "N/A"}</td>
-                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center; color: { '#10B981' if data[54] == 'PASS' else '#EF4444' };">{data[54] if len(data) > 54 else "N/A"}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{data[47] if len(data) > 47 else "N/A"}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{data[48] if len(data) > 48 else "N/A"}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{data[49] if len(data) > 49 else "N/A"}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center; color: { '#10B981' if data[50] == 'PASS' else '#EF4444' };">{data[50] if len(data) > 50 else "N/A"}</td>
                 </tr>
             """
 
@@ -664,22 +772,23 @@ class ReportsPage(QWidget):
             <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px;">
         """
 
-        if len(data) > 59:
+        if len(data) > 55:
             html += f"""
-                <tr><td style="padding: 4px; font-weight: bold;">Overall Mean Recovery:</td><td>{data[55] if len(data) > 55 else "N/A"}%</td></tr>
-                <tr><td style="padding: 4px; font-weight: bold;">Overall % RSD:</td><td>{data[56] if len(data) > 56 else "N/A"}%</td></tr>
-                <tr><td style="padding: 4px; font-weight: bold;">Overall Bias:</td><td>{data[57] if len(data) > 57 else "N/A"}%</td></tr>
-                <tr><td style="padding: 4px; font-weight: bold;">Pooled SD:</td><td>{data[58] if len(data) > 58 else "N/A"}</td></tr>
+                <tr><td style="padding: 4px; font-weight: bold;">Overall Mean Recovery:</td><td>{data[51] if len(data) > 51 else "N/A"}%</td></tr>
+                <tr><td style="padding: 4px; font-weight: bold;">Overall % RSD:</td><td>{data[52] if len(data) > 52 else "N/A"}%</td></tr>
+                <tr><td style="padding: 4px; font-weight: bold;">Overall Bias:</td><td>{data[53] if len(data) > 53 else "N/A"}%</td></tr>
+                <tr><td style="padding: 4px; font-weight: bold;">Pooled SD:</td><td>{data[54] if len(data) > 54 else "N/A"}</td></tr>
                 <tr><td style="padding: 4px; font-weight: bold;">Overall Status:</td>
-                    <td style="color: { '#10B981' if data[59] == 'PASS' else '#EF4444' };">{data[59] if len(data) > 59 else "N/A"}</td></tr>
+                    <td style="color: { '#10B981' if data[55] == 'PASS' else '#EF4444' };">{data[55] if len(data) > 55 else "N/A"}</td></tr>
             """
 
         html += "</table></div>"
         self.module_tabs["Accuracy"].setHtml(html)
 
     def generate_precision_html(self, data):
-        """Generates the Precision tab HTML."""
-        if not data:
+        """Generates the Precision tab HTML with comprehensive summary tables."""
+        print(f"🔍 generate_precision_html called with data: {type(data)}, {data if data is None else 'tuple present'}")  # Debug
+        if data is None:
             html = """
             <div style="padding: 20px; color: #64748B; text-align: center;">
                 <p>No Precision data available for this project.</p>
@@ -689,41 +798,150 @@ class ReportsPage(QWidget):
             self.module_tabs["Precision"].setHtml(html)
             return
 
+        # Extract data from tuple (accounting for id and project_id at indices 0-1)
+        rep_1 = data[2] if len(data) > 2 else 0.0
+        rep_2 = data[3] if len(data) > 3 else 0.0
+        rep_3 = data[4] if len(data) > 4 else 0.0
+        rep_4 = data[5] if len(data) > 5 else 0.0
+        rep_5 = data[6] if len(data) > 6 else 0.0
+        rep_6 = data[7] if len(data) > 7 else 0.0
+        rep_mean = data[8] if len(data) > 8 else 0.0
+        rep_sd = data[9] if len(data) > 9 else 0.0
+        rep_rsd = data[10] if len(data) > 10 else 0.0
+        rep_status = data[11] if len(data) > 11 else "PENDING"
+        
+        ip_1 = data[12] if len(data) > 12 else 0.0
+        ip_2 = data[13] if len(data) > 13 else 0.0
+        ip_3 = data[14] if len(data) > 14 else 0.0
+        ip_4 = data[15] if len(data) > 15 else 0.0
+        ip_5 = data[16] if len(data) > 16 else 0.0
+        ip_6 = data[17] if len(data) > 17 else 0.0
+        ip_mean = data[18] if len(data) > 18 else 0.0
+        ip_sd = data[19] if len(data) > 19 else 0.0
+        ip_rsd = data[20] if len(data) > 20 else 0.0
+        ip_status = data[21] if len(data) > 21 else "PENDING"
+        
+        combined_mean = data[22] if len(data) > 22 else 0.0
+        combined_sd = data[23] if len(data) > 23 else 0.0
+        combined_rsd = data[24] if len(data) > 24 else 0.0
+        overall_status = data[25] if len(data) > 25 else "PENDING"
+        
+        print(f"📋 Extracted precision data - rep_mean: {rep_mean}, ip_mean: {ip_mean}, combined_mean: {combined_mean}")  # Debug
+        
+        # Determine colors for status
+        rep_status_color = '#10B981' if rep_status == 'PASS' else '#EF4444'
+        ip_status_color = '#10B981' if ip_status == 'PASS' else '#EF4444' if ip_status == 'FAIL' else '#94A3B8'
+        overall_status_color = '#10B981' if overall_status == 'PASS' else '#EF4444'
+        
+        # Pre-format intermediate precision values (may be 0 if not entered)
+        ip_1_str = f"{ip_1:.2f}" if ip_1 > 0 else "—"
+        ip_2_str = f"{ip_2:.2f}" if ip_2 > 0 else "—"
+        ip_3_str = f"{ip_3:.2f}" if ip_3 > 0 else "—"
+        ip_4_str = f"{ip_4:.2f}" if ip_4 > 0 else "—"
+        ip_5_str = f"{ip_5:.2f}" if ip_5 > 0 else "—"
+        ip_6_str = f"{ip_6:.2f}" if ip_6 > 0 else "—"
+        ip_mean_str = f"{ip_mean:.2f}" if ip_mean > 0 else "N/A"
+        ip_sd_str = f"{ip_sd:.4f}" if ip_sd > 0 else "N/A"
+        ip_rsd_str = f"{ip_rsd:.2f}" if ip_rsd > 0 else "N/A"
+        
         html = f"""
         <div style="font-family: Arial, sans-serif; padding: 20px;">
-            <h2 style="color: #1E3A8A;">Precision Results</h2>
+            <h2 style="color: #1E3A8A;">Precision Validation Results</h2>
             <hr style="border: 1px solid #E2E8F0;">
             
-            <h3>Repeatability (Analyst 1 / Day 1)</h3>
-            <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px;">
-                <tr><td style="padding: 4px; font-weight: bold;">Replicates:</td>
-                    <td>{data[1]}, {data[2]}, {data[3]}, {data[4]}, {data[5]}, {data[6]}</td></tr>
-                <tr><td style="padding: 4px; font-weight: bold;">Mean:</td><td>{data[7]}</td></tr>
-                <tr><td style="padding: 4px; font-weight: bold;">SD:</td><td>{data[8]}</td></tr>
-                <tr><td style="padding: 4px; font-weight: bold;">% RSD:</td><td>{data[9]}</td></tr>
-                <tr><td style="padding: 4px; font-weight: bold;">Status:</td>
-                    <td style="color: { '#10B981' if data[10] == 'PASS' else '#EF4444' };">{data[10]}</td></tr>
+            <h3>Repeatability (Analyst 1, Day 1, Instrument 1)</h3>
+            <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px;">
+                <tr style="background-color: #1E3A8A; color: white;">
+                    <th style="padding: 6px; text-align: center;">Replicate 1</th>
+                    <th style="padding: 6px; text-align: center;">Replicate 2</th>
+                    <th style="padding: 6px; text-align: center;">Replicate 3</th>
+                    <th style="padding: 6px; text-align: center;">Replicate 4</th>
+                    <th style="padding: 6px; text-align: center;">Replicate 5</th>
+                    <th style="padding: 6px; text-align: center;">Replicate 6</th>
+                </tr>
+                <tr>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{rep_1:.2f}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{rep_2:.2f}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{rep_3:.2f}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{rep_4:.2f}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{rep_5:.2f}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{rep_6:.2f}</td>
+                </tr>
             </table>
-
-            <h3>Intermediate Precision (Analyst 2 / Day 2)</h3>
+            
             <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px;">
-                <tr><td style="padding: 4px; font-weight: bold;">Replicates:</td>
-                    <td>{data[11]}, {data[12]}, {data[13]}, {data[14]}, {data[15]}, {data[16]}</td></tr>
-                <tr><td style="padding: 4px; font-weight: bold;">Mean:</td><td>{data[17]}</td></tr>
-                <tr><td style="padding: 4px; font-weight: bold;">SD:</td><td>{data[18]}</td></tr>
-                <tr><td style="padding: 4px; font-weight: bold;">% RSD:</td><td>{data[19]}</td></tr>
-                <tr><td style="padding: 4px; font-weight: bold;">Status:</td>
-                    <td style="color: { '#10B981' if data[20] == 'PASS' else '#EF4444' };">{data[20]}</td></tr>
+                <tr>
+                    <td style="padding: 6px; font-weight: bold;">Mean:</td>
+                    <td style="padding: 6px;">{rep_mean:.2f}%</td>
+                    <td style="padding: 6px; font-weight: bold;">Standard Deviation:</td>
+                    <td style="padding: 6px;">{rep_sd:.4f}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 6px; font-weight: bold;">% RSD:</td>
+                    <td style="padding: 6px;">{rep_rsd:.2f}%</td>
+                    <td style="padding: 6px; font-weight: bold;">Status:</td>
+                    <td style="padding: 6px; color: {rep_status_color}; font-weight: bold;">{rep_status}</td>
+                </tr>
             </table>
-
-            <h3>Combined Precision</h3>
+            
+            <h3 style="margin-top: 20px;">Intermediate Precision (Analyst 2, Day 2, Instrument 2 - Optional)</h3>
+            <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px;">
+                <tr style="background-color: #10B981; color: white;">
+                    <th style="padding: 6px; text-align: center;">Replicate 1</th>
+                    <th style="padding: 6px; text-align: center;">Replicate 2</th>
+                    <th style="padding: 6px; text-align: center;">Replicate 3</th>
+                    <th style="padding: 6px; text-align: center;">Replicate 4</th>
+                    <th style="padding: 6px; text-align: center;">Replicate 5</th>
+                    <th style="padding: 6px; text-align: center;">Replicate 6</th>
+                </tr>
+                <tr>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{ip_1_str}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{ip_2_str}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{ip_3_str}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{ip_4_str}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{ip_5_str}</td>
+                    <td style="padding: 6px; border-bottom: 1px solid #E2E8F0; text-align: center;">{ip_6_str}</td>
+                </tr>
+            </table>
+            
             <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px;">
-                <tr><td style="padding: 4px; font-weight: bold;">Combined Mean (N=12):</td><td>{data[21]}</td></tr>
-                <tr><td style="padding: 4px; font-weight: bold;">Pooled SD:</td><td>{data[22]}</td></tr>
-                <tr><td style="padding: 4px; font-weight: bold;">Combined % RSD:</td><td>{data[23]}</td></tr>
-                <tr><td style="padding: 4px; font-weight: bold;">Overall Status:</td>
-                    <td style="color: { '#10B981' if data[24] == 'PASS' else '#EF4444' };">{data[24]}</td></tr>
+                <tr>
+                    <td style="padding: 6px; font-weight: bold;">Mean:</td>
+                    <td style="padding: 6px;">{ip_mean_str}%</td>
+                    <td style="padding: 6px; font-weight: bold;">Standard Deviation:</td>
+                    <td style="padding: 6px;">{ip_sd_str}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 6px; font-weight: bold;">% RSD:</td>
+                    <td style="padding: 6px;">{ip_rsd_str}%</td>
+                    <td style="padding: 6px; font-weight: bold;">Status:</td>
+                    <td style="padding: 6px; color: {ip_status_color}; font-weight: bold;">{ip_status}</td>
+                </tr>
             </table>
+            
+            <h3 style="margin-top: 20px;">Combined Precision Summary (N=12 or N=6)</h3>
+            <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; background-color: #F0F4F8; border: 1px solid #CBD5E1; border-radius: 6px; padding: 15px;">
+                <tr>
+                    <td style="padding: 8px; font-weight: bold; border-right: 1px solid #CBD5E1;">Combined Mean:</td>
+                    <td style="padding: 8px; font-size: 14px; font-weight: bold; color: #1E3A8A;">{combined_mean:.2f}%</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px; font-weight: bold; border-right: 1px solid #CBD5E1;">Pooled Standard Deviation:</td>
+                    <td style="padding: 8px;">{combined_sd:.4f}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px; font-weight: bold; border-right: 1px solid #CBD5E1;">Combined % RSD:</td>
+                    <td style="padding: 8px;">{combined_rsd:.2f}%</td>
+                </tr>
+                <tr style="background-color: white; border-top: 2px solid #1E3A8A;">
+                    <td style="padding: 8px; font-weight: bold; border-right: 1px solid #CBD5E1;">Overall Validation Status:</td>
+                    <td style="padding: 8px; font-size: 14px; font-weight: bold; color: {overall_status_color};">{overall_status}</td>
+                </tr>
+            </table>
+            
+            <div style="margin-top: 20px; padding: 10px; background-color: #E8F5E9; border-left: 4px solid #10B981; border-radius: 4px;">
+                <p style="color: #2E7D32; font-size: 11px; margin: 0;"><b>✓ Acceptance Criteria:</b> % RSD ≤ 2.0% for each test (Repeatability, Intermediate Precision, Combined)</p>
+            </div>
         </div>
         """
         self.module_tabs["Precision"].setHtml(html)

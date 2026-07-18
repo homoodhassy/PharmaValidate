@@ -1,4 +1,6 @@
 import math
+import os
+import sys
 from PySide6.QtWidgets import (
     QWidget,
     QLabel,
@@ -9,8 +11,14 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QMessageBox,
 )
 from PySide6.QtCore import Qt
+
+# Dynamic fallback path handling to safely locate root modules
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from database.database import save_precision, _update_summary_status, update_overall_status
 
 class PrecisionWindow(QWidget):
     def __init__(self, project=None, parent=None):
@@ -250,6 +258,7 @@ class PrecisionWindow(QWidget):
                 background-color: #059669;
             }
         """)
+        self.btnSave.clicked.connect(self.save_data)
         buttons_layout.addWidget(self.btnSave)
         scroll_layout.addLayout(buttons_layout)
 
@@ -361,3 +370,83 @@ class PrecisionWindow(QWidget):
             self.lblCombRSD.setText("0.00%")
             self.lblOverallStatus.setText("Pending")
             self.lblOverallStatus.setStyleSheet("color: gray; font-weight: bold; font-size: 14px;")
+
+    def save_data(self):
+        """Saves precision validation data to database."""
+        # Collect all input values
+        rep_vals = self.get_inputs(self.rep_inputs)
+        ip_vals = self.get_inputs(self.ip_inputs)
+        
+        # Calculate statistics
+        rep_mean, rep_sd, rep_rsd = self.calculate_stats(rep_vals)
+        ip_mean, ip_sd, ip_rsd = self.calculate_stats(ip_vals)
+        
+        combined_vals = rep_vals + ip_vals
+        comb_mean, comb_sd, comb_rsd = self.calculate_stats(combined_vals)
+        
+        # Determine status
+        rep_status = "PASS" if len(rep_vals) == 6 and rep_rsd <= 2.0 else "FAIL" if len(rep_vals) == 6 else "PENDING"
+        ip_status = "PASS" if len(ip_vals) == 6 and ip_rsd <= 2.0 else "FAIL" if len(ip_vals) == 6 else "PENDING"
+        overall_status = "PASS" if rep_status == "PASS" and (ip_status == "PASS" or len(ip_vals) == 0) else "FAIL" if (rep_status == "FAIL" or ip_status == "FAIL") else "PENDING"
+        
+        if self.project and len(self.project) > 0:
+            project_id = self.project[0]
+            
+            try:
+                # Prepare data dictionary
+                data = {
+                    "rep_1": rep_vals[0] if len(rep_vals) > 0 else 0.0,
+                    "rep_2": rep_vals[1] if len(rep_vals) > 1 else 0.0,
+                    "rep_3": rep_vals[2] if len(rep_vals) > 2 else 0.0,
+                    "rep_4": rep_vals[3] if len(rep_vals) > 3 else 0.0,
+                    "rep_5": rep_vals[4] if len(rep_vals) > 4 else 0.0,
+                    "rep_6": rep_vals[5] if len(rep_vals) > 5 else 0.0,
+                    "rep_mean": rep_mean,
+                    "rep_sd": rep_sd,
+                    "rep_rsd": rep_rsd,
+                    "rep_status": rep_status,
+                    "ip_1": ip_vals[0] if len(ip_vals) > 0 else 0.0,
+                    "ip_2": ip_vals[1] if len(ip_vals) > 1 else 0.0,
+                    "ip_3": ip_vals[2] if len(ip_vals) > 2 else 0.0,
+                    "ip_4": ip_vals[3] if len(ip_vals) > 3 else 0.0,
+                    "ip_5": ip_vals[4] if len(ip_vals) > 4 else 0.0,
+                    "ip_6": ip_vals[5] if len(ip_vals) > 5 else 0.0,
+                    "ip_mean": ip_mean,
+                    "ip_sd": ip_sd,
+                    "ip_rsd": ip_rsd,
+                    "ip_status": ip_status,
+                    "combined_mean": comb_mean,
+                    "combined_sd": comb_sd,
+                    "combined_rsd": comb_rsd,
+                    "overall_status": overall_status
+                }
+                
+                # Save to database
+                save_precision(project_id, data)
+                _update_summary_status(project_id, "precision_status", overall_status)
+                update_overall_status(project_id)
+                
+                QMessageBox.information(
+                    self,
+                    "Validation Saved",
+                    f"Precision validation results saved successfully!\n\n"
+                    f"Repeatability Mean: {rep_mean:.2f}%, RSD: {rep_rsd:.2f}%, Status: {rep_status}\n"
+                    f"Intermediate Precision Mean: {ip_mean:.2f}%, RSD: {ip_rsd:.2f}%, Status: {ip_status}\n"
+                    f"Combined Mean: {comb_mean:.2f}%, RSD: {comb_rsd:.2f}%\n"
+                    f"Overall Status: {overall_status}",
+                    QMessageBox.Ok
+                )
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Database Error",
+                    f"An error occurred while saving: {e}",
+                    QMessageBox.Ok
+                )
+        else:
+            QMessageBox.warning(
+                self,
+                "No Active Project",
+                "Cannot save because no active validation project ID was found.",
+                QMessageBox.Ok
+            )

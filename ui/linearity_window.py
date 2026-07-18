@@ -1,4 +1,5 @@
 import sys
+import os
 from PySide6.QtWidgets import (
     QWidget,
     QLabel,
@@ -21,7 +22,11 @@ matplotlib.use('Qt5Agg')  # Configures matplotlib backend safely for PySide inte
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
+# Dynamic fallback path handling to safely locate root modules
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from calculations.linearity_calculator import LinearityCalculator
+from database.database import save_linearity, _update_summary_status, update_overall_status
 
 class MplCanvas(FigureCanvas):
     """Interactive Matplotlib canvas for drawing the Linearity curve."""
@@ -499,23 +504,136 @@ class LinearityWindow(QWidget):
         self.canvas.draw()
 
     def save_data(self):
-        """Validates entry status and outputs dataset details."""
+        """Saves linearity validation data to database."""
+        # Collect all level data
         all_x = []
         all_y = []
+        levels_data = []
+        
         for row in range(len(self.nominal_inputs)):
+            level_weights = []
+            level_responses = []
+            
             for rep in range(3):
                 w = self.weight_inputs[row][rep].text().strip()
                 r = self.response_inputs[row][rep].text().strip()
                 if w and r:
-                    all_x.append(w)
-                    all_y.append(r)
-
+                    try:
+                        level_weights.append(float(w))
+                        level_responses.append(float(r))
+                        all_x.append(float(w))
+                        all_y.append(float(r))
+                    except ValueError:
+                        pass
+            
+            if len(level_responses) > 0:
+                # Calculate level statistics
+                mean_resp = sum(level_responses) / len(level_responses)
+                if len(level_responses) >= 2:
+                    from statistics import stdev
+                    sd_resp = stdev(level_responses)
+                    rsd_resp = (sd_resp / mean_resp) * 100 if mean_resp > 0 else 0.0
+                else:
+                    rsd_resp = 0.0
+                
+                nom_pct = float(self.nominal_inputs[row].text()) if self.nominal_inputs[row].text() else 0.0
+                
+                levels_data.append({
+                    "level_number": row + 1,
+                    "nominal_percent": nom_pct,
+                    "weight_1": level_weights[0] if len(level_weights) > 0 else 0.0,
+                    "weight_2": level_weights[1] if len(level_weights) > 1 else 0.0,
+                    "weight_3": level_weights[2] if len(level_weights) > 2 else 0.0,
+                    "response_1": level_responses[0] if len(level_responses) > 0 else 0.0,
+                    "response_2": level_responses[1] if len(level_responses) > 1 else 0.0,
+                    "response_3": level_responses[2] if len(level_responses) > 2 else 0.0,
+                    "mean_response": mean_resp,
+                    "rsd_percent": rsd_resp,
+                })
+        
         if len(all_x) < 3:
             QMessageBox.warning(self, "Validation Error", "Please enter at least 3 replicate pairs before saving dataset.")
             return
-
-        QMessageBox.information(
-            self, 
-            "Success", 
-            f"Linearity validated successfully!\n\nPoints Saved: {len(all_x)}\nSlope: {self.lblSlope.text()}\nR²: {self.lblRSquare.text()}\n% Y-Intercept: {self.lblYInterceptPct.text()}"
-        )
+        
+        # Get global regression values
+        slope = float(self.lblSlope.text())
+        intercept = float(self.lblIntercept.text())
+        r_squared = float(self.lblRSquare.text())
+        multiple_r = float(self.lblMultipleR.text())
+        rss = float(self.lblRSS.text())
+        y_intercept_pct = float(self.lblYInterceptPct.text().rstrip('%'))
+        pooled_rsd = float(self.lblPooledRSD.text().rstrip('%'))
+        r_sq_status = self.lblRSqStatus.text()
+        y_int_status = self.lblYIntStatus.text()
+        
+        # Determine overall status
+        overall_status = "PASS" if r_sq_status == "PASS" and y_int_status == "PASS" else "FAIL"
+        
+        # Prepare data dictionary for all levels (all global stats will be repeated)
+        if self.project and len(self.project) > 0:
+            project_id = self.project[0]
+            
+            try:
+                # Delete old data once before saving all levels
+                from database.database import get_connection
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM linearity_results WHERE project_id = ?", (project_id,))
+                conn.commit()
+                conn.close()
+                
+                # Save all levels with global regression data
+                for level_data in levels_data:
+                    data = {
+                        "level_number": level_data["level_number"],
+                        "nominal_percent": level_data["nominal_percent"],
+                        "weight_1": level_data["weight_1"],
+                        "weight_2": level_data["weight_2"],
+                        "weight_3": level_data["weight_3"],
+                        "response_1": level_data["response_1"],
+                        "response_2": level_data["response_2"],
+                        "response_3": level_data["response_3"],
+                        "mean_response": level_data["mean_response"],
+                        "rsd_percent": level_data["rsd_percent"],
+                        "slope": slope,
+                        "intercept": intercept,
+                        "r_squared": r_squared,
+                        "multiple_r": multiple_r,
+                        "rss": rss,
+                        "y_intercept_percent": y_intercept_pct,
+                        "pooled_rsd": pooled_rsd,
+                        "status_r_squared": r_sq_status,
+                        "status_y_intercept": y_int_status,
+                        "overall_status": overall_status
+                    }
+                    save_linearity(project_id, data, delete_first=False)
+                
+                # Update summary status
+                _update_summary_status(project_id, "linearity_status", overall_status)
+                update_overall_status(project_id)
+                
+                QMessageBox.information(
+                    self,
+                    "Validation Saved",
+                    f"Linearity validation results saved successfully!\n\n"
+                    f"Points Saved: {len(all_x)}\n"
+                    f"Slope: {slope:.5f}\n"
+                    f"R²: {r_squared:.5f}\n"
+                    f"% Y-Intercept: {y_intercept_pct:.2f}%\n"
+                    f"Status: {overall_status}",
+                    QMessageBox.Ok
+                )
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Database Error",
+                    f"An error occurred while saving: {e}",
+                    QMessageBox.Ok
+                )
+        else:
+            QMessageBox.warning(
+                self,
+                "No Active Project",
+                "Cannot save because no active validation project ID was found.",
+                QMessageBox.Ok
+            )
